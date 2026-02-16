@@ -284,3 +284,38 @@ export async function getBookmarkedQuestions(req, res, next) {
     return next(error);
   }
 }
+
+export async function getBookmarkedQuestionById(req, res, next) {
+  try {
+    const bookmarkId = req.params.id;
+    if (!mongoose.Types.ObjectId.isValid(bookmarkId)) {
+      return res.status(400).json({ message: 'Invalid bookmark id' });
+    }
+
+    const bookmark = await QuestionBookmark.findOne({ _id: bookmarkId, user: req.user.id });
+    if (!bookmark) {
+      return res.status(404).json({ message: 'Bookmark not found' });
+    }
+
+    const exam = await Exam.findById(bookmark.exam);
+    if (!exam) {
+      return res.status(404).json({ message: 'Exam not found for this bookmark' });
+    }
+
+    const question = exam.questions.id(bookmark.questionId);
+    if (!question) {
+      return res.status(404).json({ message: 'Question not found for this bookmark' });
+    }
+
+    return res.json({
+      bookmarkId: bookmark._id,
+      bookmarkedAt: bookmark.createdAt,
+      ...toQuestionView(exam, question, true)
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+
+
