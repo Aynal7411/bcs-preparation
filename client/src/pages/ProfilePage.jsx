@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback } from 'react';
+import { useEffect, useMemo, useState  } from 'react';
 import toast from 'react-hot-toast';
 import { api } from '../services/api';
 
@@ -25,7 +25,7 @@ export default function ProfilePage() {
     return stats.profileCompletion || 0;
   }, [stats]);
 
-  const loadProfile = useCallback(async () => {
+  const loadProfile = async () => {
     try {
       const [profileRes, statsRes] = await Promise.all([api.get('/user/profile'), api.get('/user/stats')]);
       setProfile(profileRes.data);
@@ -37,14 +37,14 @@ export default function ProfilePage() {
         examTargets: profileRes.data.examTargets || []
       });
     } catch (error) {
-      toast.error(error?.response?.data?.message|| error?.message || 'Failed to load profile');
+      toast.error(error?.response?.data?.message || 'Failed to load profile');
     }
-  }, []);
+  };
 
 
   useEffect(() => {
     loadProfile();
-  }, [loadProfile]);
+  }, []);
 
   const toggleTarget = (target) => {
     setForm((prev) => ({
