@@ -14,23 +14,22 @@ function isReservedAdminEmail(email) {
   return Boolean(email) && email === fixedAdminEmail;
 }
 
+function getCookieOptions(maxAge) {
+  const isProduction = env.nodeEnv === 'production';
+  return {
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: isProduction ? 'none' : 'lax',
+    maxAge
+  };
+}
+
 function setAuthCookies(res, payload) {
   const accessToken = generateToken(payload);
   const refreshToken = generateRefreshToken(payload);
 
-  res.cookie('token', accessToken, {
-    httpOnly: true,
-    secure: false,
-    sameSite: 'lax',
-    maxAge: 7 * 24 * 60 * 60 * 1000
-  });
-
-  res.cookie('refreshToken', refreshToken, {
-    httpOnly: true,
-    secure: false,
-    sameSite: 'lax',
-    maxAge: 30 * 24 * 60 * 60 * 1000
-  });
+  res.cookie('token', accessToken, getCookieOptions(7 * 24 * 60 * 60 * 1000));
+  res.cookie('refreshToken', refreshToken, getCookieOptions(30 * 24 * 60 * 60 * 1000));
 }
 
 function normalizeEmail(email) {
@@ -262,12 +261,7 @@ export function refreshToken(req, res) {
     const payload = jwt.verify(incomingToken, env.refreshJwtSecret || env.jwtSecret);
     const newAccessToken = generateToken({ id: payload.id, role: payload.role, email: payload.email });
 
-    res.cookie('token', newAccessToken, {
-      httpOnly: true,
-      secure: false,
-      sameSite: 'lax',
-      maxAge: 7 * 24 * 60 * 60 * 1000
-    });
+    res.cookie('token', newAccessToken, getCookieOptions(7 * 24 * 60 * 60 * 1000));
 
     return res.json({ message: 'Token refreshed' });
   } catch (error) {

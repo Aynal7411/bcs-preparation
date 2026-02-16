@@ -6,7 +6,7 @@ export const env = {
   nodeEnv: process.env.NODE_ENV || 'development',
   port: process.env.PORT || 5000,
   mongodbUri: process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/job_prep',
-  clientUrl: process.env.CLIENT_URL || 'http://localhost:5173',
+  clientUrl: process.env.CLIENT_URL || 'https://bcs-prep.netlify.app',
   adminEmail: process.env.ADMIN_EMAIL || 'admin@jobprep.com',
   adminPassword: process.env.ADMIN_PASSWORD || 'admin123',
   jwtSecret: process.env.JWT_SECRET || 'replace-with-strong-secret',
