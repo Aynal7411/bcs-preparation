@@ -8,6 +8,7 @@ import QuestionBookmark from './models/QuestionBookmark.js';
 import Payment from './models/Payment.js';
 import JobCircular from './models/JobCircular.js';
 import Testimonial from './models/Testimonial.js';
+import { buildBcsPreliminaryExamSets } from './data/bcsPreliminarySets.js';
 
 await connectDB();
 
@@ -24,7 +25,7 @@ await Promise.all([
 const adminPass = await bcrypt.hash('admin123', 10);
 await User.create({ name: 'Admin', email: 'admin@jobprep.com', password: adminPass, role: 'admin' });
 
-await Exam.insertMany([
+const baseExams = [
   {
     title: '43rd BCS Model Test',
     category: 'BCS',
@@ -88,7 +89,11 @@ await Exam.insertMany([
       }
     ]
   }
-]);
+];
+
+const bcsPreliminarySets = buildBcsPreliminaryExamSets(10, 50);
+
+await Exam.insertMany([...baseExams, ...bcsPreliminarySets]);
 
 await JobCircular.insertMany([
   {

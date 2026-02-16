@@ -42,7 +42,14 @@ function normalizePhone(phone) {
 }
 
 function buildUserResponse(user) {
-  return { id: user._id, name: user.name, email: user.email, phone: user.phone, role: user.role };
+  return {
+    id: user._id,
+    name: user.name,
+    email: user.email,
+    phone: user.phone,
+    role: user.role,
+    profileImage: user.profileImage || null
+  };
 }
 
 function buildIdentifierQuery(email, phone) {

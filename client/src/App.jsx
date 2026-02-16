@@ -10,6 +10,7 @@ import { api } from './services/api';
 const LoginPage = lazy(() => import('./pages/LoginPage'));
 const AdminLoginPage = lazy(() => import('./pages/AdminLoginPage'));
 const RegisterPage = lazy(() => import('./pages/RegisterPage'));
+const AboutPage = lazy(() => import('./pages/AboutPage'));
 const ProfilePage = lazy(() => import('./pages/ProfilePage'));
 const AdminExamManagerPage = lazy(() => import('./pages/AdminExamManagerPage'));
 const QuestionBankPage = lazy(() => import('./pages/QuestionBankPage'));
@@ -48,7 +49,16 @@ export default function App() {
     const hydrateAuth = async () => {
       try {
         const { data } = await api.get('/auth/me');
-        dispatch(setUser({ id: data.id || data._id, name: data.name, email: data.email, role: data.role }));
+        dispatch(
+          setUser({
+            id: data.id || data._id,
+            name: data.name,
+            email: data.email,
+            role: data.role,
+            phone: data.phone,
+            profileImage: data.profileImage || null
+          })
+        );
       } catch {
         dispatch(logout());
       } finally {
@@ -65,6 +75,7 @@ export default function App() {
       <Suspense fallback={<RouteFallback />}>
         <Routes>
           <Route path="/" element={<HomePage />} />
+          <Route path="/about" element={<AboutPage />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/admin/login" element={<AdminLoginPage />} />
           <Route path="/register" element={<RegisterPage />} />

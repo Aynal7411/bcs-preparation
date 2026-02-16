@@ -11,6 +11,15 @@ export default function Navbar() {
   const navigate = useNavigate();
   const { isAuthenticated, user } = useAuth();
   const isAdmin = user?.role === 'admin';
+  const profileOwnerName = user?.name?.trim() || 'User';
+  const profileImageUrl = user?.profileImage?.url || '';
+  const profileInitials =
+    profileOwnerName
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0]?.toUpperCase())
+      .join('') || 'U';
   const [isLoggingOut, setIsLoggingOut] = useState(false);
 
   const handleLogout = async () => {
@@ -42,11 +51,9 @@ export default function Navbar() {
             Home
           </NavLink>
 
-          {isAuthenticated && !isAdmin && (
-            <NavLink to="/profile" className={linkClass}>
-              Profile
-            </NavLink>
-          )}
+          <NavLink to="/about" className={linkClass}>
+            About
+          </NavLink>
 
           {isAuthenticated && isAdmin && (
             <NavLink to="/dashboard" className={linkClass}>
@@ -80,7 +87,25 @@ export default function Navbar() {
 
           {isAuthenticated && (
             <>
-              <span className="text-xs text-slate-500">{user?.name || 'User'}</span>
+              <Link
+                to="/profile"
+                title={`Profile owner: ${profileOwnerName}`}
+                aria-label={`Profile owner: ${profileOwnerName}`}
+                className="flex items-center gap-2 rounded-full border border-slate-300 bg-slate-50 px-2 py-1 hover:bg-slate-100"
+              >
+                {profileImageUrl ? (
+                  <img
+                    src={profileImageUrl}
+                    alt={profileOwnerName}
+                    className="h-7 w-7 rounded-full object-cover"
+                  />
+                ) : (
+                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-brand-700 text-[10px] font-bold text-white">
+                    {profileInitials}
+                  </span>
+                )}
+                <span className="max-w-[140px] truncate text-xs font-semibold text-slate-700">{profileOwnerName}</span>
+              </Link>
               <button
                 type="button"
                 className="rounded border border-slate-300 px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100"
