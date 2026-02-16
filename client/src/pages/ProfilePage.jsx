@@ -90,7 +90,7 @@ export default function ProfilePage() {
       </section>
 
       <section className="mt-6 rounded-xl bg-white p-5 shadow-sm">
-        <h2 className="text-lg font-semibold">Profile Information</h2>
+        <h2 className="text-lg font-semibold">{profile?.name || 'User'} Information</h2>
         {!profile ? (
           <p className="mt-3 text-sm text-slate-500">Loading...</p>
         ) : (
