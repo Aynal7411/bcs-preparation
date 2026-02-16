@@ -18,6 +18,26 @@ describe('Auth routes', () => {
     expect(response.headers['set-cookie']).toBeTruthy();
   });
 
+  it('registers and logs in a user with phone-only identifier', async () => {
+    const registerResponse = await request(app).post('/api/auth/register').send({
+      name: 'Phone User',
+      phone: '01700000000',
+      password: 'password123'
+    });
+
+    expect(registerResponse.status).toBe(201);
+    expect(registerResponse.body.user.phone).toBe('01700000000');
+    expect(registerResponse.body.user.email).toBeUndefined();
+
+    const loginResponse = await request(app).post('/api/auth/login').send({
+      phone: '01700000000',
+      password: 'password123'
+    });
+
+    expect(loginResponse.status).toBe(200);
+    expect(loginResponse.body.user.phone).toBe('01700000000');
+  });
+
   it('blocks registration using reserved admin email', async () => {
     const response = await request(app).post('/api/auth/register').send({
       name: 'Not Admin',

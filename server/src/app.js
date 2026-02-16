@@ -16,10 +16,25 @@ import { env } from './config/env.js';
 import { errorHandler } from './middleware/errorHandler.js';
 
 const app = express();
+const allowedOrigins = new Set(env.clientUrls || []);
 
 app.use(
   cors({
-    origin: env.clientUrl,
+    origin(origin, callback) {
+      if (!origin) {
+        return callback(null, true);
+      }
+
+      if (allowedOrigins.has(origin)) {
+        return callback(null, true);
+      }
+
+      if (env.nodeEnv !== 'production') {
+        return callback(null, true);
+      }
+
+      return callback(new Error(`CORS blocked for origin: ${origin}`));
+    },
     credentials: true
   })
 );
@@ -40,5 +55,5 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/payments', paymentRoutes);
 
 app.use(errorHandler);
-
+app.get('/', (req, res) => res.json({ message: 'Welcome to the Exam Portal API' }));
 export default app;

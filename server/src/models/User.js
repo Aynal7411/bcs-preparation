@@ -4,7 +4,7 @@ import { softDeletePlugin } from './plugins/softDeletePlugin.js';
 const userSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true },
-    email: { type: String, required: true, lowercase: true, trim: true },
+    email: { type: String, lowercase: true, trim: true },
     password: { type: String, required: true, minlength: 6 },
     phone: { type: String, trim: true },
     bio: { type: String, trim: true, maxlength: 300 },
@@ -25,7 +25,10 @@ userSchema.index(
   { email: 1 },
   {
     unique: true,
-    partialFilterExpression: { isDeleted: { $ne: true } }
+    partialFilterExpression: {
+      isDeleted: { $ne: true },
+      email: { $exists: true, $type: 'string', $nin: ['', null] }
+    }
   }
 );
 userSchema.index(

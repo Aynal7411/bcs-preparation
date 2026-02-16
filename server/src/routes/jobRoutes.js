@@ -6,5 +6,11 @@ const router = Router();
 
 router.get('/', getLatestJobs);
 router.post('/', authGuard, adminGuard, createJob);
+router.get('/all', authGuard, adminGuard, getAllJobs);
+router.get('/published', getPublishedJobs);
+router.get('/:id', getJobById);
+router.put('/:id', authGuard, adminGuard, updateJob);
+router.delete('/:id', authGuard, adminGuard, deleteJob);
+router.put('/:id/publish', authGuard, adminGuard, toggleJobPublish);
 
 export default router;
