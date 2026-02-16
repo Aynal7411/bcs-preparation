@@ -4,12 +4,15 @@ import {
   bulkUploadQuestions,
   commitQuestionFileUpload,
   createExam,
+  deleteUser,
   deleteExam,
   getAdminDashboard,
   getQuestionUploadHistory,
   getReports,
   getUsers,
   previewQuestionFileUpload,
+  restoreExam,
+  restoreUser,
   uploadQuestionFile,
   updateExam,
   updateUser
@@ -70,6 +73,7 @@ router.put(
 );
 
 router.delete('/exam/:id', deleteExam);
+router.post('/exam/:id/restore', restoreExam);
 
 router.post(
   '/question/bulk',
@@ -104,6 +108,8 @@ router.put(
   ],
   updateUser
 );
+router.delete('/users/:id', deleteUser);
+router.post('/users/:id/restore', restoreUser);
 
 router.get('/reports', getReports);
 

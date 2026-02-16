@@ -1,6 +1,8 @@
 import request from 'supertest';
+import mongoose from 'mongoose';
 import app from '../src/app.js';
 import Exam from '../src/models/Exam.js';
+import User from '../src/models/User.js';
 
 function getCookie(response) {
   return response.headers['set-cookie'];
@@ -140,5 +142,69 @@ describe('Admin routes', () => {
 
     expect(response.status).toBe(400);
     expect(response.body.message).toMatch(/row limit/i);
+  });
+
+  it('soft deletes and restores exams without permanent data loss', async () => {
+    const cookie = await adminCookie();
+    const exam = await Exam.create({
+      title: 'Soft Delete Exam',
+      category: 'Bank',
+      examDate: new Date(),
+      questions: []
+    });
+
+    const deleteResponse = await request(app).delete(`/api/admin/exam/${exam._id}`).set('Cookie', cookie);
+    expect(deleteResponse.status).toBe(200);
+    expect(deleteResponse.body.message).toMatch(/archived/i);
+
+    const examFromCollection = await Exam.collection.findOne({ _id: exam._id });
+    expect(examFromCollection).toBeTruthy();
+    expect(examFromCollection.isDeleted).toBe(true);
+
+    const listAfterDelete = await request(app).get('/api/exams');
+    expect(listAfterDelete.status).toBe(200);
+    expect(listAfterDelete.body).toHaveLength(0);
+
+    const restoreResponse = await request(app).post(`/api/admin/exam/${exam._id}/restore`).set('Cookie', cookie);
+    expect(restoreResponse.status).toBe(200);
+    expect(restoreResponse.body.message).toMatch(/restored/i);
+
+    const listAfterRestore = await request(app).get('/api/exams');
+    expect(listAfterRestore.status).toBe(200);
+    expect(listAfterRestore.body).toHaveLength(1);
+  });
+
+  it('soft deletes and restores users with login access control', async () => {
+    const cookie = await adminCookie();
+    const registerResponse = await request(app).post('/api/auth/register').send({
+      name: 'Archivable User',
+      email: 'archivable@example.com',
+      password: 'password123'
+    });
+    const userId = registerResponse.body.user.id;
+
+    const deleteResponse = await request(app).delete(`/api/admin/users/${userId}`).set('Cookie', cookie);
+    expect(deleteResponse.status).toBe(200);
+    expect(deleteResponse.body.message).toMatch(/archived/i);
+
+    const deletedUser = await User.collection.findOne({ _id: new mongoose.Types.ObjectId(userId) });
+    expect(deletedUser).toBeTruthy();
+    expect(deletedUser.isDeleted).toBe(true);
+
+    const loginWhileDeleted = await request(app).post('/api/auth/login').send({
+      email: 'archivable@example.com',
+      password: 'password123'
+    });
+    expect(loginWhileDeleted.status).toBe(401);
+
+    const restoreResponse = await request(app).post(`/api/admin/users/${userId}/restore`).set('Cookie', cookie);
+    expect(restoreResponse.status).toBe(200);
+    expect(restoreResponse.body.message).toMatch(/restored/i);
+
+    const loginAfterRestore = await request(app).post('/api/auth/login').send({
+      email: 'archivable@example.com',
+      password: 'password123'
+    });
+    expect(loginAfterRestore.status).toBe(200);
   });
 });
