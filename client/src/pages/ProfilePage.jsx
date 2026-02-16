@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import { api } from '../services/api';
 
-const examTargetOptions = ['BCS', 'Primary', 'NTRCA', 'Bank', 'Job Seeker'];
+const examTargetOptions = ['BCS', 'Primary', 'NTRCA', 'Bank', 'Govt Bank', 'Railway', 'Police SI', 'Private Bank', 'Other'];
 
 function toInputDate(dateValue) {
   if (!dateValue) return '-';
@@ -75,7 +75,7 @@ export default function ProfilePage() {
 
   return (
     <main className="mx-auto max-w-4xl px-4 py-8">
-      <h1 className="text-2xl font-bold">User Profile</h1>
+      <h1 className="text-2xl font-bold">{profile?.name || 'User'} Profile</h1>
       <p className="mt-1 text-sm text-slate-600">Manage your account as a general user, examinee, or job seeker.</p>
 
       <section className="mt-6 grid gap-4 sm:grid-cols-2">
