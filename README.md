@@ -58,6 +58,20 @@ Default seeded admin:
 - Email: `admin@jobprep.com`
 - Password: `admin123`
 
+## Automated Tests
+
+Backend tests (`vitest + supertest`):
+
+```bash
+npm run test:server
+```
+
+Frontend tests (`vitest + React Testing Library`):
+
+```bash
+npm run test:client
+```
+
 ## Deployment (Render)
 
 This repository includes a Render Blueprint file: `render.yaml`.

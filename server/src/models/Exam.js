@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { softDeletePlugin } from './plugins/softDeletePlugin.js';
 
 const examQuestionSchema = new mongoose.Schema(
   {
@@ -34,5 +35,11 @@ const examSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+examSchema.plugin(softDeletePlugin);
+
+examSchema.index({ isDeleted: 1, createdAt: -1 });
+examSchema.index({ isDeleted: 1, category: 1, createdAt: -1 });
+examSchema.index({ isDeleted: 1, isFeatured: 1, examDate: 1 });
 
 export default mongoose.model('Exam', examSchema);

@@ -28,5 +28,8 @@ const examResultSchema = new mongoose.Schema(
 );
 
 examResultSchema.index({ exam: 1, user: 1, status: 1 });
+examResultSchema.index({ user: 1, status: 1, submittedAt: -1 });
+examResultSchema.index({ exam: 1, status: 1, score: -1, timeTakenSeconds: 1, submittedAt: 1 });
+examResultSchema.index({ status: 1, submittedAt: 1 });
 
 export default mongoose.model('ExamResult', examResultSchema);

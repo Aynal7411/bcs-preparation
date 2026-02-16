@@ -2,21 +2,42 @@ import { Router } from 'express';
 import { body } from 'express-validator';
 import {
   bulkUploadQuestions,
+  commitQuestionFileUpload,
   createExam,
   deleteExam,
   getAdminDashboard,
+  getQuestionUploadHistory,
   getReports,
   getUsers,
+  previewQuestionFileUpload,
   uploadQuestionFile,
   updateExam,
   updateUser
 } from '../controllers/adminController.js';
 import { adminGuard, authGuard } from '../middleware/authMiddleware.js';
-import { upload } from '../services/uploadService.js';
+import { QUESTION_UPLOAD_MAX_FILE_SIZE_BYTES, questionUpload } from '../services/uploadService.js';
 
 const router = Router();
 
 router.use(authGuard, adminGuard);
+
+function questionFileUploadMiddleware(req, res, next) {
+  questionUpload.single('file')(req, res, (error) => {
+    if (!error) {
+      return next();
+    }
+
+    if (error.code === 'LIMIT_FILE_SIZE') {
+      return res.status(400).json({
+        message: `File size exceeds limit. Maximum allowed is ${Math.floor(
+          QUESTION_UPLOAD_MAX_FILE_SIZE_BYTES / (1024 * 1024)
+        )}MB`
+      });
+    }
+
+    return next(error);
+  });
+}
 
 router.get('/dashboard', getAdminDashboard);
 
@@ -64,7 +85,10 @@ router.post(
   bulkUploadQuestions
 );
 
-router.post('/question/upload-file', upload.single('file'), uploadQuestionFile);
+router.post('/question/upload-file', questionFileUploadMiddleware, uploadQuestionFile);
+router.post('/question/upload-preview', questionFileUploadMiddleware, previewQuestionFileUpload);
+router.post('/question/upload-commit', commitQuestionFileUpload);
+router.get('/question/upload-history', getQuestionUploadHistory);
 
 router.get('/users', getUsers);
 

@@ -1,14 +1,37 @@
+import crypto from 'crypto';
 import mongoose from 'mongoose';
 import { validationResult } from 'express-validator';
 import Exam from '../models/Exam.js';
 import ExamResult from '../models/ExamResult.js';
 import JobCircular from '../models/JobCircular.js';
+import UploadHistory from '../models/UploadHistory.js';
 import User from '../models/User.js';
+import { QUESTION_UPLOAD_MAX_FILE_SIZE_BYTES } from '../services/uploadService.js';
+
+const MAX_UPLOAD_ROW_COUNT = 1000;
+const UPLOAD_PREVIEW_TTL_MS = 15 * 60 * 1000;
+const PREVIEW_SAMPLE_SIZE = 5;
+const DUPLICATE_ROWS_RESPONSE_LIMIT = 50;
+const uploadPreviewStore = new Map();
 
 function badRequest(message) {
   const error = new Error(message);
   error.statusCode = 400;
   return error;
+}
+
+function notFound(message) {
+  const error = new Error(message);
+  error.statusCode = 404;
+  return error;
+}
+
+function normalizeRecordStatus(recordStatus) {
+  const normalized = String(recordStatus || 'active').trim().toLowerCase();
+  if (!['active', 'deleted', 'all'].includes(normalized)) {
+    throw badRequest('recordStatus must be one of: active, deleted, all');
+  }
+  return normalized;
 }
 
 function hasValidationErrors(req, res) {
@@ -60,6 +83,12 @@ function normalizeQuestions(rawQuestions) {
       explanation
     };
   });
+}
+
+function enforceQuestionRowLimit(questions) {
+  if (questions.length > MAX_UPLOAD_ROW_COUNT) {
+    throw badRequest(`Upload row limit exceeded. Maximum ${MAX_UPLOAD_ROW_COUNT} rows are allowed per import`);
+  }
 }
 
 function parseCsvLine(line) {
@@ -153,15 +182,237 @@ function parseQuestionFile({ originalName, mimetype, buffer }) {
       throw badRequest('Invalid JSON file');
     }
     const rawQuestions = Array.isArray(parsed) ? parsed : parsed?.questions;
-    return normalizeQuestions(rawQuestions);
+    const normalized = normalizeQuestions(rawQuestions);
+    enforceQuestionRowLimit(normalized);
+    return normalized;
   }
 
   if (isCsv) {
     const rawQuestions = parseCsvQuestions(text);
-    return normalizeQuestions(rawQuestions);
+    const normalized = normalizeQuestions(rawQuestions);
+    enforceQuestionRowLimit(normalized);
+    return normalized;
   }
 
   throw badRequest('Unsupported file format. Upload .json or .csv');
+}
+
+function normalizeUploadMode(mode) {
+  const normalized = String(mode || 'append').trim().toLowerCase();
+  if (!['append', 'replace'].includes(normalized)) {
+    throw badRequest('mode must be either append or replace');
+  }
+  return normalized;
+}
+
+function normalizeDuplicateHandling(duplicateHandling) {
+  const normalized = String(duplicateHandling || 'skip').trim().toLowerCase();
+  if (!['skip', 'allow'].includes(normalized)) {
+    throw badRequest('duplicateHandling must be either skip or allow');
+  }
+  return normalized;
+}
+
+function questionTextKey(questionText) {
+  return String(questionText || '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
+}
+
+function analyzeDuplicateQuestions({ questions, existingQuestions, mode }) {
+  const existingKeys =
+    mode === 'append'
+      ? new Set((existingQuestions || []).map((item) => questionTextKey(item?.questionText)).filter(Boolean))
+      : new Set();
+
+  const seenInBatch = new Map();
+  const duplicateIndexes = new Set();
+  const duplicateRowMap = new Map();
+  let duplicateWithinFileCount = 0;
+  let duplicateExistingCount = 0;
+
+  const markDuplicate = (index, reason, firstRowNumber = null) => {
+    duplicateIndexes.add(index);
+    const rowNumber = index + 1;
+    const existing = duplicateRowMap.get(index) || {
+      rowNumber,
+      questionText: questions[index]?.questionText || '',
+      reasons: []
+    };
+    if (!existing.reasons.includes(reason)) {
+      existing.reasons.push(reason);
+    }
+    if (firstRowNumber && !existing.firstRowNumber) {
+      existing.firstRowNumber = firstRowNumber;
+    }
+    duplicateRowMap.set(index, existing);
+  };
+
+  questions.forEach((question, index) => {
+    const key = questionTextKey(question.questionText);
+    if (!key) {
+      return;
+    }
+
+    const firstSeenIndex = seenInBatch.get(key);
+    if (firstSeenIndex !== undefined) {
+      duplicateWithinFileCount += 1;
+      markDuplicate(index, 'within-file', firstSeenIndex + 1);
+    } else {
+      seenInBatch.set(key, index);
+    }
+
+    if (existingKeys.has(key)) {
+      duplicateExistingCount += 1;
+      markDuplicate(index, 'existing-exam');
+    }
+  });
+
+  const duplicateRows = Array.from(duplicateRowMap.values()).sort((a, b) => a.rowNumber - b.rowNumber);
+
+  return {
+    duplicateIndexes,
+    duplicateRows,
+    duplicateWithinFileCount,
+    duplicateExistingCount
+  };
+}
+
+function selectImportQuestions(questions, duplicateIndexes, duplicateHandling) {
+  if (duplicateHandling === 'allow') {
+    return questions;
+  }
+  return questions.filter((_, index) => !duplicateIndexes.has(index));
+}
+
+function buildSampleQuestions(questions) {
+  return questions.slice(0, PREVIEW_SAMPLE_SIZE).map((question, index) => ({
+    rowNumber: index + 1,
+    questionText: question.questionText,
+    optionCount: question.options.length,
+    correctOptionIndex: question.correctOptionIndex
+  }));
+}
+
+function cleanupExpiredPreviews() {
+  const now = Date.now();
+  for (const [previewId, preview] of uploadPreviewStore.entries()) {
+    if (preview.expiresAtMs <= now) {
+      uploadPreviewStore.delete(previewId);
+    }
+  }
+}
+
+function createPreviewId() {
+  if (typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return crypto.randomBytes(16).toString('hex');
+}
+
+function getPreviewById(previewId, adminId) {
+  cleanupExpiredPreviews();
+
+  const preview = uploadPreviewStore.get(previewId);
+  if (!preview) {
+    throw notFound('Upload preview not found or expired. Please upload and preview again');
+  }
+
+  if (String(preview.adminId) !== String(adminId)) {
+    const error = new Error('This upload preview belongs to another admin account');
+    error.statusCode = 403;
+    throw error;
+  }
+
+  return preview;
+}
+
+async function buildUploadContext({ examId, mode, file }) {
+  if (!file) {
+    throw badRequest('Question file is required (field: file)');
+  }
+
+  if (file.size > QUESTION_UPLOAD_MAX_FILE_SIZE_BYTES) {
+    throw badRequest(
+      `File size exceeds limit. Maximum allowed is ${Math.floor(QUESTION_UPLOAD_MAX_FILE_SIZE_BYTES / (1024 * 1024))}MB`
+    );
+  }
+
+  const questions = parseQuestionFile({
+    originalName: file.originalname,
+    mimetype: file.mimetype,
+    buffer: file.buffer
+  });
+
+  const exam = await Exam.findById(examId).select('_id title questions');
+  if (!exam) {
+    throw badRequest('Exam not found');
+  }
+
+  const duplicateSummary = analyzeDuplicateQuestions({
+    questions,
+    existingQuestions: exam.questions,
+    mode
+  });
+
+  return { exam, questions, duplicateSummary };
+}
+
+async function createUploadHistoryEntry({
+  uploaderId,
+  examId,
+  fileName,
+  mode,
+  duplicateHandling,
+  totalRows,
+  importedCount,
+  duplicateWithinFileCount,
+  duplicateExistingCount,
+  previewId
+}) {
+  await UploadHistory.create({
+    uploader: uploaderId,
+    exam: examId,
+    fileName,
+    mode,
+    duplicateHandling,
+    totalRows,
+    importedCount,
+    skippedDuplicateCount: Math.max(totalRows - importedCount, 0),
+    duplicateWithinFileCount,
+    duplicateExistingCount,
+    previewId
+  });
+}
+
+function buildPreviewResponse(preview) {
+  const duplicateIndexSet = new Set(preview.duplicateIndexes);
+  const importableCount = preview.questions.filter((_, index) => !duplicateIndexSet.has(index)).length;
+
+  return {
+    previewId: preview.previewId,
+    fileName: preview.fileName,
+    mode: preview.mode,
+    exam: {
+      id: preview.examId,
+      title: preview.examTitle
+    },
+    expiresAt: new Date(preview.expiresAtMs).toISOString(),
+    limits: {
+      maxFileSizeBytes: QUESTION_UPLOAD_MAX_FILE_SIZE_BYTES,
+      maxRows: MAX_UPLOAD_ROW_COUNT
+    },
+    counts: {
+      totalRows: preview.questions.length,
+      importableCount,
+      duplicateRows: preview.duplicateIndexes.length,
+      duplicateWithinFileCount: preview.duplicateWithinFileCount,
+      duplicateExistingCount: preview.duplicateExistingCount
+    },
+    duplicateRows: preview.duplicateRows.slice(0, DUPLICATE_ROWS_RESPONSE_LIMIT),
+    sampleQuestions: buildSampleQuestions(preview.questions)
+  };
 }
 
 async function importQuestionsToExam({ examId, mode, questions }) {
@@ -268,14 +519,41 @@ export async function deleteExam(req, res, next) {
       return res.status(400).json({ message: 'Invalid exam id' });
     }
 
-    const exam = await Exam.findByIdAndDelete(req.params.id);
+    const exam = await Exam.findById(req.params.id);
     if (!exam) {
       return res.status(404).json({ message: 'Exam not found' });
     }
 
-    await ExamResult.deleteMany({ exam: req.params.id });
+    exam.isDeleted = true;
+    exam.deletedAt = new Date();
+    exam.deletedBy = req.user.id;
+    await exam.save();
 
-    return res.json({ message: 'Exam deleted successfully' });
+    return res.json({ message: 'Exam archived successfully' });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+export async function restoreExam(req, res, next) {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ message: 'Invalid exam id' });
+    }
+
+    const exam = await Exam.findOneAndUpdate(
+      { _id: req.params.id, isDeleted: true },
+      {
+        $set: { isDeleted: false, deletedAt: null, deletedBy: null }
+      },
+      { new: true }
+    ).setOptions({ includeDeleted: true });
+
+    if (!exam) {
+      return res.status(404).json({ message: 'Archived exam not found' });
+    }
+
+    return res.json({ message: 'Exam restored successfully', exam });
   } catch (error) {
     return next(error);
   }
@@ -289,6 +567,7 @@ export async function bulkUploadQuestions(req, res, next) {
 
     const { examId, questions, mode = 'append' } = req.body;
     const normalizedQuestions = normalizeQuestions(questions);
+    enforceQuestionRowLimit(normalizedQuestions);
     const exam = await importQuestionsToExam({ examId, mode, questions: normalizedQuestions });
 
     return res.status(201).json({
@@ -303,33 +582,203 @@ export async function bulkUploadQuestions(req, res, next) {
 export async function uploadQuestionFile(req, res, next) {
   try {
     const examId = String(req.body.examId || '');
-    const mode = String(req.body.mode || 'append');
+    const mode = normalizeUploadMode(req.body.mode);
+    const duplicateHandling = normalizeDuplicateHandling(req.body.duplicateHandling);
 
     if (!mongoose.Types.ObjectId.isValid(examId)) {
       throw badRequest('Valid examId is required');
     }
 
-    if (!['append', 'replace'].includes(mode)) {
-      throw badRequest('mode must be either append or replace');
-    }
-
-    if (!req.file) {
-      throw badRequest('Question file is required (field: file)');
-    }
-
-    const questions = parseQuestionFile({
-      originalName: req.file.originalname,
-      mimetype: req.file.mimetype,
-      buffer: req.file.buffer
+    const { questions, duplicateSummary } = await buildUploadContext({
+      examId,
+      mode,
+      file: req.file
     });
 
-    const exam = await importQuestionsToExam({ examId, mode, questions });
+    const selectedQuestions = selectImportQuestions(questions, duplicateSummary.duplicateIndexes, duplicateHandling);
+    const updatedExam = await importQuestionsToExam({ examId, mode, questions: selectedQuestions });
+
+    await createUploadHistoryEntry({
+      uploaderId: req.user.id,
+      examId,
+      fileName: req.file.originalname || 'upload-file',
+      mode,
+      duplicateHandling,
+      totalRows: questions.length,
+      importedCount: selectedQuestions.length,
+      duplicateWithinFileCount: duplicateSummary.duplicateWithinFileCount,
+      duplicateExistingCount: duplicateSummary.duplicateExistingCount,
+      previewId: null
+    });
 
     return res.status(201).json({
-      message: `File imported successfully (${questions.length} questions, mode: ${mode})`,
-      importedCount: questions.length,
-      totalQuestions: exam.questions.length,
-      fileName: req.file.originalname
+      message: `File imported successfully (${selectedQuestions.length}/${questions.length} questions, mode: ${mode})`,
+      fileName: req.file.originalname,
+      mode,
+      duplicateHandling,
+      importedCount: selectedQuestions.length,
+      totalRows: questions.length,
+      skippedDuplicateCount: Math.max(questions.length - selectedQuestions.length, 0),
+      duplicateWithinFileCount: duplicateSummary.duplicateWithinFileCount,
+      duplicateExistingCount: duplicateSummary.duplicateExistingCount,
+      totalQuestions: updatedExam.questions.length
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+export async function previewQuestionFileUpload(req, res, next) {
+  try {
+    const examId = String(req.body.examId || '');
+    const mode = normalizeUploadMode(req.body.mode);
+
+    if (!mongoose.Types.ObjectId.isValid(examId)) {
+      throw badRequest('Valid examId is required');
+    }
+
+    const { exam, questions, duplicateSummary } = await buildUploadContext({
+      examId,
+      mode,
+      file: req.file
+    });
+
+    cleanupExpiredPreviews();
+
+    const previewId = createPreviewId();
+    const expiresAtMs = Date.now() + UPLOAD_PREVIEW_TTL_MS;
+
+    const preview = {
+      previewId,
+      adminId: req.user.id,
+      examId: String(exam._id),
+      examTitle: exam.title,
+      fileName: req.file.originalname || 'upload-file',
+      mode,
+      questions,
+      duplicateIndexes: Array.from(duplicateSummary.duplicateIndexes),
+      duplicateRows: duplicateSummary.duplicateRows,
+      duplicateWithinFileCount: duplicateSummary.duplicateWithinFileCount,
+      duplicateExistingCount: duplicateSummary.duplicateExistingCount,
+      createdAtMs: Date.now(),
+      expiresAtMs
+    };
+
+    uploadPreviewStore.set(previewId, preview);
+
+    return res.status(201).json({
+      message: 'Preview generated. Review duplicates before final import',
+      preview: buildPreviewResponse(preview)
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+export async function commitQuestionFileUpload(req, res, next) {
+  try {
+    const previewId = String(req.body.previewId || '').trim();
+    const duplicateHandling = normalizeDuplicateHandling(req.body.duplicateHandling);
+
+    if (!previewId) {
+      throw badRequest('previewId is required');
+    }
+
+    const preview = getPreviewById(previewId, req.user.id);
+    const duplicateIndexSet = new Set(preview.duplicateIndexes);
+    const selectedQuestions = selectImportQuestions(preview.questions, duplicateIndexSet, duplicateHandling);
+    const exam = await importQuestionsToExam({
+      examId: preview.examId,
+      mode: preview.mode,
+      questions: selectedQuestions
+    });
+
+    await createUploadHistoryEntry({
+      uploaderId: req.user.id,
+      examId: preview.examId,
+      fileName: preview.fileName,
+      mode: preview.mode,
+      duplicateHandling,
+      totalRows: preview.questions.length,
+      importedCount: selectedQuestions.length,
+      duplicateWithinFileCount: preview.duplicateWithinFileCount,
+      duplicateExistingCount: preview.duplicateExistingCount,
+      previewId
+    });
+
+    uploadPreviewStore.delete(previewId);
+
+    return res.status(201).json({
+      message: 'Preview import committed successfully',
+      fileName: preview.fileName,
+      mode: preview.mode,
+      duplicateHandling,
+      importedCount: selectedQuestions.length,
+      totalRows: preview.questions.length,
+      skippedDuplicateCount: Math.max(preview.questions.length - selectedQuestions.length, 0),
+      duplicateWithinFileCount: preview.duplicateWithinFileCount,
+      duplicateExistingCount: preview.duplicateExistingCount,
+      totalQuestions: exam.questions.length
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+export async function getQuestionUploadHistory(req, res, next) {
+  try {
+    const page = Math.max(1, Number.parseInt(req.query.page || '1', 10));
+    const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit || '20', 10)));
+    const skip = (page - 1) * limit;
+    const filter = {};
+
+    if (req.query.examId) {
+      if (!mongoose.Types.ObjectId.isValid(req.query.examId)) {
+        throw badRequest('Invalid examId');
+      }
+      filter.exam = req.query.examId;
+    }
+
+    const [history, total] = await Promise.all([
+      UploadHistory.find(filter)
+        .populate('uploader', 'name email')
+        .populate('exam', 'title')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit),
+      UploadHistory.countDocuments(filter)
+    ]);
+
+    return res.json({
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+      history: history.map((item) => ({
+        id: item._id,
+        fileName: item.fileName,
+        mode: item.mode,
+        duplicateHandling: item.duplicateHandling,
+        totalRows: item.totalRows,
+        importedCount: item.importedCount,
+        skippedDuplicateCount: item.skippedDuplicateCount,
+        duplicateWithinFileCount: item.duplicateWithinFileCount,
+        duplicateExistingCount: item.duplicateExistingCount,
+        uploadedAt: item.createdAt,
+        uploader: item.uploader
+          ? {
+              id: item.uploader._id,
+              name: item.uploader.name,
+              email: item.uploader.email
+            }
+          : null,
+        exam: item.exam
+          ? {
+              id: item.exam._id,
+              title: item.exam.title
+            }
+          : null
+      }))
     });
   } catch (error) {
     return next(error);
@@ -343,6 +792,12 @@ export async function getUsers(req, res, next) {
     const skip = (page - 1) * limit;
 
     const filter = {};
+    const recordStatus = normalizeRecordStatus(req.query.recordStatus);
+    const includeDeleted = recordStatus !== 'active';
+
+    if (recordStatus === 'deleted') {
+      filter.isDeleted = true;
+    }
     if (req.query.role) {
       filter.role = req.query.role;
     }
@@ -355,14 +810,20 @@ export async function getUsers(req, res, next) {
       ];
     }
 
-    const [users, total] = await Promise.all([
-      User.find(filter).select('-password').sort({ createdAt: -1 }).skip(skip).limit(limit),
-      User.countDocuments(filter)
-    ]);
+    const usersQuery = User.find(filter).select('-password').sort({ createdAt: -1 }).skip(skip).limit(limit);
+    const totalQuery = User.countDocuments(filter);
+
+    if (includeDeleted) {
+      usersQuery.setOptions({ includeDeleted: true });
+      totalQuery.setOptions({ includeDeleted: true });
+    }
+
+    const [users, total] = await Promise.all([usersQuery, totalQuery]);
 
     return res.json({
       page,
       limit,
+      recordStatus,
       total,
       totalPages: Math.ceil(total / limit),
       users
@@ -415,9 +876,64 @@ export async function updateUser(req, res, next) {
         bio: existing.bio,
         role: existing.role,
         examTargets: existing.examTargets,
+        isDeleted: existing.isDeleted,
+        deletedAt: existing.deletedAt,
         createdAt: existing.createdAt,
         updatedAt: existing.updatedAt
       }
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+export async function deleteUser(req, res, next) {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ message: 'Invalid user id' });
+    }
+
+    if (String(req.user.id) === String(req.params.id)) {
+      return res.status(400).json({ message: 'You cannot archive your own admin account' });
+    }
+
+    const user = await User.findById(req.params.id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    user.isDeleted = true;
+    user.deletedAt = new Date();
+    user.deletedBy = req.user.id;
+    await user.save();
+
+    return res.json({ message: 'User archived successfully' });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+export async function restoreUser(req, res, next) {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ message: 'Invalid user id' });
+    }
+
+    const user = await User.findOneAndUpdate(
+      { _id: req.params.id, isDeleted: true },
+      { $set: { isDeleted: false, deletedAt: null, deletedBy: null } },
+      { new: true }
+    )
+      .setOptions({ includeDeleted: true })
+      .select('-password');
+
+    if (!user) {
+      return res.status(404).json({ message: 'Archived user not found' });
+    }
+
+    return res.json({
+      message: 'User restored successfully',
+      user
     });
   } catch (error) {
     return next(error);
@@ -454,6 +970,7 @@ export async function getReports(req, res, next) {
           }
         },
         { $unwind: '$exam' },
+        { $match: { 'exam.isDeleted': { $ne: true } } },
         {
           $project: {
             _id: 0,
@@ -487,6 +1004,7 @@ export async function getReports(req, res, next) {
           }
         },
         { $unwind: '$user' },
+        { $match: { 'user.isDeleted': { $ne: true } } },
         {
           $project: {
             _id: 0,
