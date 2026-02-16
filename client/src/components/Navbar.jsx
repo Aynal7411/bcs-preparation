@@ -42,7 +42,7 @@ export default function Navbar() {
   return (
     <header className="sticky top-0 z-30 border-b border-slate-200 bg-white">
       <nav className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-3">
-        <Link to="/" className="text-lg font-bold text-slate-900">
+        <Link to="/" className="text-2xl font-extrabold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent transition-all duration-300 hover:scale-105 hover:from-indigo-600 hover:to-blue-600">
           Govt Job Live
         </Link>
 
