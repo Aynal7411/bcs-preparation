@@ -1,4 +1,5 @@
 import dotenv from 'dotenv';
+import { validateEnv as validateEnvironment } from './validateEnv.js';
 
 dotenv.config();
 
@@ -13,24 +14,30 @@ function parseClientUrls() {
     return parsed;
   }
 
-  return ['http://localhost:5173', 'http://127.0.0.1:5173', 'https://bcs-prep.netlify.app'];
+  const isDev = !process.env.NODE_ENV || process.env.NODE_ENV === 'development';
+  return isDev ? ['http://localhost:5173', 'http://127.0.0.1:5173'] : [];
 }
 
 const clientUrls = parseClientUrls();
+const nodeEnv = process.env.NODE_ENV || 'development';
+const isDev = nodeEnv === 'development';
 
 export const env = {
-  nodeEnv: process.env.NODE_ENV || 'development',
-  port: process.env.PORT || 5000,
-  mongodbUri: process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/job_prep',
-  clientUrl: clientUrls[0],
+  nodeEnv,
+  port: parseInt(process.env.PORT, 10) || 5000,
+  mongodbUri: process.env.MONGODB_URI || (isDev ? 'mongodb://127.0.0.1:27017/job_prep' : undefined),
+  clientUrl: clientUrls[0] || undefined,
   clientUrls,
-  adminEmail: process.env.ADMIN_EMAIL || 'admin@jobprep.com',
-  adminPassword: process.env.ADMIN_PASSWORD || 'admin123',
-  jwtSecret: process.env.JWT_SECRET || 'replace-with-strong-secret',
+  adminEmail: process.env.ADMIN_EMAIL || undefined,
+  adminPassword: process.env.ADMIN_PASSWORD || undefined,
+  jwtSecret: process.env.JWT_SECRET || (isDev ? 'dev-secret-key-change-in-production' : undefined),
   jwtExpire: process.env.JWT_EXPIRE || '7d',
-  refreshJwtSecret: process.env.REFRESH_JWT_SECRET || process.env.JWT_SECRET || 'replace-with-strong-secret',
+  refreshJwtSecret: process.env.REFRESH_JWT_SECRET || process.env.JWT_SECRET || (isDev ? 'dev-refresh-secret-change-in-production' : undefined),
   refreshJwtExpire: process.env.REFRESH_JWT_EXPIRE || '30d',
-  cloudinaryCloudName: process.env.CLOUDINARY_CLOUD_NAME,
-  cloudinaryApiKey: process.env.CLOUDINARY_API_KEY,
-  cloudinaryApiSecret: process.env.CLOUDINARY_API_SECRET
+  cloudinaryCloudName: process.env.CLOUDINARY_CLOUD_NAME || undefined,
+  cloudinaryApiKey: process.env.CLOUDINARY_API_KEY || undefined,
+  cloudinaryApiSecret: process.env.CLOUDINARY_API_SECRET || undefined
 };
+
+// Validate environment variables
+validateEnvironment(env);
