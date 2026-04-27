@@ -38,7 +38,26 @@ function AdminRoute({ children, isReady }) {
 }
 
 function RouteFallback() {
-  return <main className="mx-auto max-w-7xl px-4 py-6 text-sm text-slate-500">Loading...</main>;
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-slate-50">
+      <div className="flex flex-col items-center gap-3">
+        
+        {/* Spinner */}
+        <div className="h-10 w-10 animate-spin rounded-full border-4 border-slate-300 border-t-slate-600"></div>
+
+        {/* Text */}
+        <p className="text-sm font-medium text-slate-600">
+          Loading, please wait...
+        </p>
+
+        {/* Sub text */}
+        <span className="text-xs text-slate-400">
+          Preparing your content
+        </span>
+
+      </div>
+    </main>
+  );
 }
 
 export default function App() {
